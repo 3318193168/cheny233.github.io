@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+    <id>https://cheny233.github.io</id>
+    <title>Cheny</title>
+    <updated>2020-04-10T15:27:23.153Z</updated>
+    <generator>https://github.com/jpmonette/feed</generator>
+    <link rel="alternate" href="https://cheny233.github.io"/>
+    <link rel="self" href="https://cheny233.github.io/atom.xml"/>
+    <subtitle>Cheny&apos;s blog</subtitle>
+    <logo>https://cheny233.github.io/images/avatar.png</logo>
+    <icon>https://cheny233.github.io/favicon.ico</icon>
+    <rights>All rights reserved 2020, Cheny</rights>
+    <entry>
+        <title type="html"><![CDATA[写Minecraft-AFK时踩过的那些坑]]></title>
+        <id>https://cheny233.github.io/post/Minecraft-AFK-difficulties/</id>
+        <link href="https://cheny233.github.io/post/Minecraft-AFK-difficulties/">
+        </link>
+        <updated>2020-04-09T05:06:08.000Z</updated>
+        <summary type="html"><![CDATA[<p>其实在写Minecraft-AFK之前我是没有接触过WindowsAPI的，也是在写这个程序时才了解到。不得不说自学的道路有些坎坷，踩了无数的坑。在此记录一下，一来自己忘记时可以翻翻博客，二来如果有人有疑问，也有和我一样踩了类似的坑，我这里也可以给他一些启发。由于对于WindowsAPI完全不了解，这是在里面选取对自己有用的东西，所以有些讲解可能不准确，如果有人能够指出来，我在这里表示感谢。</p>
+]]></summary>
+        <content type="html"><![CDATA[<p>其实在写Minecraft-AFK之前我是没有接触过WindowsAPI的，也是在写这个程序时才了解到。不得不说自学的道路有些坎坷，踩了无数的坑。在此记录一下，一来自己忘记时可以翻翻博客，二来如果有人有疑问，也有和我一样踩了类似的坑，我这里也可以给他一些启发。由于对于WindowsAPI完全不了解，这是在里面选取对自己有用的东西，所以有些讲解可能不准确，如果有人能够指出来，我在这里表示感谢。</p>
+<!-- more -->
+<h2 id="获取窗口句柄">获取窗口句柄</h2>
+<p>简单说一下就行，获取窗口句柄比较简单。<br>
+既然是要后台挂机，那么肯定是向窗口发送消息，而不是向全局。窗口句柄可以看做是一个窗口的标识符，windowsAPI中保存窗口句柄的结构类型是HWND。</p>
+<h2 id="发送鼠标点击的消息">发送鼠标点击的消息</h2>
+<p>总体来说鼠标点击的实现还是很简单的，没有多少坑，简单讲一下。</p>
+<p>发送鼠标消息有四种： keybd_event，SendInput，SendMessage，PostMessage。前两者发送全局的鼠标点击消息，而后两者通过窗口句柄发送鼠标点击的消息，以实现后台挂机。</p>
+<p>SendMessage，PostMessage两者的参数是一样的：</p>
+<pre><code>HWND   hWnd                      —— 要发送的窗口句柄
+UINT   Msg                       —— 要发送的消息
+WPARAM wParam                    —— 附加消息wParam
+LPARAM lParam                    —— 附加消息lParam
+</code></pre>
+<p>以SendMessage示例，PostMessage同理：</p>
+<pre><code>SendMessage(hwnd, WM_LBUTTONDOWN, 0, 0);
+SendMessage(hwnd, WM_LBUTTONUP, 0, 0);
+</code></pre>
+<p>这样就可以发送鼠标抬起再按下的消息。</p>
+<p>WM_LBUTTONDOWN和WM_LBUTTONUP是左键按下和抬起的消息，这两个参数的wParam附加消息表示是否同时按下其他系统按键，lParam则表示鼠标的坐标。在minecraft窗口中这两个都不用设置就行。</p>
+<h2 id="模拟发送按键消息">模拟发送按键消息</h2>
+<h3 id="函数的选择">函数的选择</h3>
+<p>上文说过SendMessage和PostMessage可以向窗口发送按键消息。但是注意，键盘按键的消息只能用PostMessage。</p>
+<p>在这里说一下SendMessage和PostMessage的区别。SendMessage发送了消息后会等待消息返回才结束，而PostMessage发送完消息就会结束。而键盘消息是没有返回值的，所以SendMessage无效。</p>
+<h3 id="具体实现">具体实现</h3>
+<p>WM_KEYDOWN和WM_KEYUP消息分别模拟键盘的按下和抬起，wParam附加消息含有一个按键的虚拟码，表示需要操作的是哪个按键。</p>
+<p>根据上文所说，我们可以写出下面的语句（刚开始我也是这么写的）：</p>
+<pre><code>int vkCode = VkKeyScan('a');
+PostMessage(hwnd, WM_KEYDOWN, vkCode, 0);
+PostMessage(hwnd, WM_KEYUP, vkCode, 0);
+</code></pre>
+<p>我在其他窗口上测试成功，但是在Minecraft窗口上就不行，原来MC检测键盘是否按下不仅会检测虚拟码，还要检测扫描码。幸运的是，PostMessage是可以发送扫描码信息的，这个信息包含在lParam消息中。<br>
+lParam是一个32位的数，MSDN中有 <a href="https://docs.microsoft.com/en-us/windows/win32/inputdev/wm-keydown">WM_KEYDOWN</a> 和 <a href="https://docs.microsoft.com/en-us/windows/win32/inputdev/wm-keyup">WM_KEUP</a> 的lParam具体解释。</p>
+<p>按照上面解释，可以写出如下代码：</p>
+<pre><code>int get_Lparam(int vk, bool flag)
+{
+	int scanCode = MapVirtualKey(vk, MAPVK_VK_TO_VSC);
+	return flag | (scanCode &lt;&lt; 16) | (flag &lt;&lt; 30) | (flag &lt;&lt; 31);
+}
+</code></pre>
+<p>vk表示按键的虚拟码。<br>
+MapVirtualKey(vk, MAPVK_VK_TO_VSC)   可以获取对应虚拟码的扫描码。<br>
+flag为true表示WM_KEUP，为false表示WM_KEYDOWN。</p>
+<p>于是我们再修改上面的代码：</p>
+<pre><code>PostMessage(hwnd, WM_KEYDOWN, vkCode, get_Lparam(vkCode, false) );
+PostMessage(hwnd, WM_KEYUP, vkCode, get_Lparam(vkCode, true) );
+</code></pre>
+<p>这样在MC中就可以正常运行了。</p>
+<h2 id="写在最后">写在最后</h2>
+<p>这些便是目前写Minecraft-AFK踩过的一些坑，这是我写给自己看的，记录自己写代码时 <s>犯傻</s> 遇到的困难，如果对大家有所帮助， <s>可以到我的<a href="https://github.com/Cheny233/Minecraft-AFK">Minecraft-AFK项目</a>去点个star。</s></p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[Minecraft-AFK项目的说明]]></title>
+        <id>https://cheny233.github.io/post/Minecraft-AFK/</id>
+        <link href="https://cheny233.github.io/post/Minecraft-AFK/">
+        </link>
+        <updated>2020-04-08T15:09:32.000Z</updated>
+        <summary type="html"><![CDATA[<p>这个寒假（好长的寒假），我为自己写的一个Minecraft后台挂机程序，起初就是这么命名的，后来改成了Minecraft-AFK，觉得这样好听一点，也简短一点。这个程序也在不断的完善，虽然没什么人关注，但闲来敲敲代码也是我喜欢做的事情，我觉得我能一直维护下去。</p>
+]]></summary>
+        <content type="html"><![CDATA[<p>这个寒假（好长的寒假），我为自己写的一个Minecraft后台挂机程序，起初就是这么命名的，后来改成了Minecraft-AFK，觉得这样好听一点，也简短一点。这个程序也在不断的完善，虽然没什么人关注，但闲来敲敲代码也是我喜欢做的事情，我觉得我能一直维护下去。</p>
+<!-- more -->
+<h2 id="项目地址">项目地址</h2>
+<p><a href="https://github.com/Cheny233/Minecraft-AFK">地址</a>在这里，可以点个star哦。<br>
+<s>（给自己恰个饭）</s></p>
+<h2 id="起因">起因</h2>
+<p>三月份的时候在自己的服务器里造了个小黑塔，萌生了想后台挂机刷小黑的想法，就用C++编了一个。起初很简陋，到现在功能也越来越完善了</p>
+<h2 id="功能说明">功能说明</h2>
+<h3 id="已实现的功能">已实现的功能</h3>
+<ul>
+<li>鼠标长按/连点的后台挂机</li>
+<li>键盘按键的后台挂机</li>
+<li>保存配置文件至.config文件夹下，并在打开程序时检测是否有配置文件</li>
+</ul>
+<h3 id="尚未实现的功能">尚未实现的功能</h3>
+<p>未来有可能会 <s>咕咕咕</s> 实现</p>
+<ul>
+<li>后台鼠标移动</li>
+<li>多线程操作</li>
+</ul>
+<h2 id="激动人心的教程">激动人心的教程</h2>
+<p>虽然程序上的说明已经很通俗易懂了，但还是写一下吧</p>
+<h3 id="基础用法">基础用法</h3>
+<ul>
+<li>第一步当然是捕捉窗口，在你的Minecraft窗口中按下Ctrl+alt捕捉</li>
+<li>然后按照操作输入就好了</li>
+<li>在开始挂机之前，请检查你的游戏中是否已经 <kbd>F3</kbd>+<kbd>P</kbd>  停用失去焦点后暂停，没有的话请停用</li>
+<li>按下 <kbd>Alt</kbd>+<kbd>tab</kbd> 切出游戏窗口</li>
+<li>然后就可以愉快的挂机了，按下右Alt开始（防星际玩家：注意是右Alt），按下右Ctrl可以暂停</li>
+</ul>
+<h3 id="新加入的文件用法">新加入的文件用法</h3>
+<ul>
+<li>首先呢，按照基础用法设置好你想要的操作</li>
+<li>按下 <kbd>F12</kbd> ，输入一个配置文件的名字，就可以保存配置文件惹
+<ul>
+<li>配置文件都保存在config文件夹下，后缀名为.afk，其实可以用记事本打开修改</li>
+</ul>
+</li>
+<li>第二次打开的时候程序会自动检测配置文件，选择配置文件就行了</li>
+</ul>
+<h2 id="其他版本">其他版本</h2>
+<p><s>没想到吧这么小的项目还有多个版本</s><br>
+在我写完了Minecraft-AFK的早期版本后，Xiao_Jin和CharlieYu表示非常感兴趣，并打算写一个Python版本，没错他们成功了，他们的项目是<a href="https://github.com/super-coffee/py-Minecraft-AFK">py-Minecraft-AFK</a>，大家也过来围观一下~</p>
+<h2 id="最后">最后</h2>
+<p>累死了先写到这吧，最近要开学了（新冠肺炎终于要结束了），所以没什么时间继续敲代码了，不过呢我暑假会回来的。祝我中考好运！</p>
+]]></content>
+    </entry>
+</feed>
